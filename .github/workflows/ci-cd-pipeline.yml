@@ -54,11 +54,8 @@ jobs:
           docker push ghcr.io/${{ github.repository_owner }}/$TAG
         fi
 
-    - name: Create kind cluster
+    - name: Set up kind (Kubernetes in Docker)
       uses: helm/kind-action@v1.8.0
-      with:
-        version: v0.20.0
-        node_image: kindest/node:v1.29.0
 
     - name: Deploy to kind cluster
       run: |
@@ -72,10 +69,16 @@ jobs:
     - name: Wait for deployment rollout
       run: kubectl rollout status deployment/demo-crm --timeout=120s
 
-    - name: Verify app is running
+    - name: Port-forward and test app
       run: |
         POD=$(kubectl get pods -l app=demo-crm -o jsonpath='{.items[0].metadata.name}')
-        kubectl wait --for=condition=Ready pod/$POD --timeout=60s
         kubectl port-forward $POD 3000:3000 &
-        sleep 10
-        curl --fail http://localhost:3000 || exit 1
+        PF_PID=$!
+        sleep 15
+        echo "Checking if the app responds on http://localhost:3000"
+        curl --retry 5 --retry-delay 5 --fail http://localhost:3000 || (echo "App failed to respond" && kill $PF_PID && exit 1)
+        kill $PF_PID
+
+    - name: Clean up kind cluster
+      if: always()
+      run: kind delete cluster
