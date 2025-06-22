@@ -52,4 +52,29 @@ jobs:
     - name: Set up kind (Kubernetes in Docker)
       uses: engineerd/setup-kind@v0.5.0
 
-    - name: C
+    - name: Create kind cluster
+      run: kind create cluster
+
+    - name: Deploy to kind cluster
+      run: |
+        kubectl apply -f k8s/deployment.yaml
+        if [ -n "${{ secrets.DOCKERHUB_USERNAME }}" ]; then
+          kubectl set image deployment/demo-crm demo-crm=${{ secrets.DOCKERHUB_USERNAME }}/demo-crm:${{ github.run_number }}
+        else
+          kubectl set image deployment/demo-crm demo-crm=ghcr.io/${{ github.repository_owner }}/demo-crm:${{ github.run_number }}
+        fi
+
+    - name: Wait for deployment rollout
+      run: kubectl rollout status deployment/demo-crm --timeout=120s
+
+    - name: Verify app is running
+      run: |
+        POD=$(kubectl get pods -l app=demo-crm -o jsonpath='{.items[0].metadata.name}')
+        kubectl wait --for=condition=Ready pod/$POD --timeout=60s
+        kubectl port-forward $POD 3000:3000 &
+        sleep 10
+        curl --fail http://localhost:3000 || exit 1
+
+    - name: Clean up kind cluster
+      if: always()
+      run: kind delete cluster
